@@ -4,50 +4,87 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import plotly.express as px
+import re
 from urllib.parse import quote
+from transformers import pipeline
 
 # Konfigurasi Halaman
-st.set_page_config(page_title="Health Monitoring Dashboard", page_icon="📊", layout="wide")
-
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+st.set_page_config(page_title="IndoBERT Health Intelligence", page_icon="🤖", layout="wide")
 
 # =====================================================
-# FUNGSI ANALISIS & SCRAPER
+# 1. LOGIKA RELEVANSI (REVISI TERBARU)
 # =====================================================
-
-def hitung_sentimen(teks):
-    # Kamus sederhana Bahasa Indonesia
-    positif = ['sembuh', 'turun', 'pencegahan', 'aman', 'berhasil', 'vaksin', 'efektif', 'membaik', 'sehat', 'terkendali']
-    negatif = ['wabah', 'meninggal', 'bahaya', 'buruk', 'darurat', 'meningkat', 'kritis', 'sakit', 'gejala', 'terinfeksi']
+def hitung_relevansi_v2(keyword, judul, isi):
+    if not judul or not keyword:
+        return 0
+    
+    judul_low = judul.lower()
+    isi_low = isi.lower()
+    keyword_words = keyword.lower().split()
     
     score = 0
-    teks = teks.lower()
-    for word in positif:
-        if word in teks: score += 1
-    for word in negatif:
-        if word in teks: score -= 1
-        
-    if score > 0: return "Positif"
-    elif score < 0: return "Negatif"
-    else: return "Netral"
-
-def hitung_relevansi(keyword, judul, isi):
-    teks_lengkap = (judul + " " + isi).lower()
-    keyword_words = keyword.lower().split()
-    if not teks_lengkap: return 0
+    total_words = len(keyword_words)
     
-    # Menghitung persentase kata kunci yang muncul
-    matches = sum(1 for word in keyword_words if word in teks_lengkap)
-    score = (matches / len(keyword_words)) * 100
-    return round(score, 1)
+    if total_words == 0:
+        return 0
 
+    # A. CEK JUDUL (Bobot 70%)
+    # Menggunakan regex \b agar mencari kata utuh (bukan bagian kata lain)
+    judul_matches = 0
+    for word in keyword_words:
+        if re.search(r'\b' + re.escape(word) + r'\b', judul_low):
+            judul_matches += 1
+    
+    score += (judul_matches / total_words) * 70
+
+    # B. CEK ISI (Bobot 30%)
+    isi_matches = 0
+    for word in keyword_words:
+        # Menghitung frekuensi kemunculan kata kunci
+        count = len(re.findall(r'\b' + re.escape(word) + r'\b', isi_low))
+        if count >= 2:
+            isi_matches += 1
+        elif count == 1:
+            isi_matches += 0.5
+            
+    score += (isi_matches / total_words) * 30
+
+    return min(round(score, 1), 100.0)
+
+# =====================================================
+# 2. LOAD MODEL MACHINE LEARNING (IndoBERT)
+# =====================================================
+@st.cache_resource
+def load_sentiment_model():
+    try:
+        # Menggunakan model sentiment analysis bahasa Indonesia
+        return pipeline("sentiment-analysis", model="smalis9/indobert-sentiment-analysis")
+    except:
+        return pipeline("sentiment-analysis", model="pysentimiento/bertweet-id-sentiment")
+
+nlp_model = load_sentiment_model()
+
+def hitung_sentimen_ml(teks):
+    if not teks: return "Netral"
+    try:
+        # Limit 512 token untuk arsitektur BERT
+        hasil = nlp_model(teks[:512])[0]
+        label = hasil['label'].upper()
+        if 'POS' in label or '1' in label: return "Positif"
+        if 'NEG' in label or '0' in label: return "Negatif"
+        return "Netral"
+    except:
+        return "Netral"
+
+# =====================================================
+# 3. FUNGSI SCRAPER
+# =====================================================
 def get_content(url, portal):
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(url, headers=headers, timeout=8)
         soup = BeautifulSoup(r.text, "html.parser")
-        selectors = ["div.detail__body-text", "div.read__content", "div.article__content", "div.detail-text", "article"]
+        selectors = ["div.detail__body-text", "div.read__content", "div.article__content", "article"]
         for s in selectors:
             div = soup.select_one(s)
             if div:
@@ -58,35 +95,44 @@ def get_content(url, portal):
 def crawl_portal(keyword, portal):
     data = []
     query_encoded = quote(keyword)
+    headers = {"User-Agent": "Mozilla/5.0"}
     urls = {
         "detik": f"https://www.detik.com/search/searchall?query={query_encoded}",
         "kompas": f"https://search.kompas.com/search/?q={query_encoded}",
-        "republika": f"https://republika.co.id/search?q={query_encoded}",
-        "merdeka": f"https://www.merdeka.com/search?q={query_encoded}",
         "cnn": f"https://www.cnnindonesia.com/search/?query={query_encoded}",
-        "liputan6": f"https://www.liputan6.com/search?q={query_encoded}"
+        "republika": f"https://republika.co.id/search?q={query_encoded}"
     }
+    
     try:
         r = requests.get(urls[portal], headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
         links = soup.find_all("a", href=True)
         seen_links = set()
         count = 0
+        
         for link_tag in links:
             if count >= 4: break
-            link, title = link_tag["href"], link_tag.get_text(strip=True)
-            if (link.startswith("http") and portal in link.lower() and len(title) > 35 and link not in seen_links):
+            link = link_tag["href"]
+            title = link_tag.get_text(strip=True)
+            
+            if (link.startswith("http") and portal in link.lower() and len(title) > 30 and link not in seen_links):
                 if any(x in link for x in ["/tag/", "/indeks", "/author/"]): continue
+                
                 seen_links.add(link)
                 isi = get_content(link, portal)
-                relevansi = hitung_relevansi(keyword, title, isi)
-                if relevansi >= 50: # Hanya ambil yang minimal 50% relevan
+                
+                # Hitung Relevansi dengan Logika Baru
+                relevansi = hitung_relevansi_v2(keyword, title, isi)
+                
+                # Filter: Hanya tampilkan yang relevansinya di atas 40%
+                if relevansi >= 40:
+                    sentimen = hitung_sentimen_ml(title + " " + isi)
                     data.append({
                         "Portal": portal.upper(),
                         "Judul": title,
                         "Link": link,
-                        "Isi_Singkat": isi[:400],
-                        "Sentimen": hitung_sentimen(title + " " + isi),
+                        "Isi": isi[:300],
+                        "Sentimen": sentimen,
                         "Relevansi": relevansi
                     })
                     count += 1
@@ -95,71 +141,67 @@ def crawl_portal(keyword, portal):
     return data
 
 # =====================================================
-# UI STREAMLIT
+# 4. UI DASHBOARD
 # =====================================================
-
-st.title("🏥 Health Media Intelligence Dashboard")
-st.markdown("Analisis sentimen dan relevansi berita kesehatan dari berbagai portal media Indonesia.")
+st.title("🤖 AI-Powered Media Intelligence")
+st.markdown("Analisis Sentimen menggunakan **IndoBERT** dan **Weighted Relevance Scoring**.")
 
 with st.sidebar:
     st.header("Konfigurasi")
-    keyword_input = st.text_input("Nama Penyakit:", placeholder="Misal: Demam Berdarah")
+    keyword_input = st.text_input("Nama Penyakit / Isu:", "Demam Berdarah")
     btn_cari = st.button("Analisis Sekarang")
     st.divider()
-    st.caption("Dashboard ini melakukan crawling otomatis dan analisis teks secara real-time.")
+    st.caption("Sistem ini menggunakan arsitektur Transformer untuk memahami konteks berita.")
 
 if btn_cari and keyword_input:
     all_results = []
-    portals = ["detik", "kompas", "republika", "merdeka", "cnn", "liputan6"]
+    portals = ["detik", "kompas", "cnn", "republika"]
     
     msg = st.empty()
     bar = st.progress(0)
     
     for idx, p in enumerate(portals):
-        msg.info(f"Memindai {p.upper()}...")
+        msg.info(f"⏳ Sedang menganalisis portal: **{p.upper()}**...")
         res = crawl_portal(keyword_input, p)
         all_results.extend(res)
         bar.progress((idx + 1) / len(portals))
     
-    msg.success(f"Berhasil menarik {len(all_results)} berita. Hasil telah disaring ketat.")
+    msg.success(f"✅ Analisis Selesai! Menemukan {len(all_results)} berita relevan.")
     
     if all_results:
         df = pd.DataFrame(all_results)
-
+        
         # --- ROW 1: METRICS ---
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Artikel", len(df))
-        m2.metric("Sentimen Positif", len(df[df['Sentimen'] == 'Positif']), delta_color="normal")
-        m3.metric("Sentimen Negatif", len(df[df['Sentimen'] == 'Negatif']), delta_color="inverse")
+        m2.metric("Sentimen Positif", len(df[df['Sentimen'] == 'Positif']))
+        m3.metric("Sentimen Negatif", len(df[df['Sentimen'] == 'Negatif']))
         m4.metric("Rata-rata Relevansi", f"{round(df['Relevansi'].mean(), 1)}%")
 
         # --- ROW 2: CHARTS ---
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("Distribusi Klaster (Sumber)")
-            fig_pie = px.pie(df, names='Portal', hole=0.5, color_discrete_sequence=px.colors.qualitative.Safe)
+            fig_pie = px.pie(df, names='Portal', hole=0.5)
             st.plotly_chart(fig_pie, use_container_width=True)
             
         with c2:
-            st.subheader("Tren Sentimen Publik")
-            sentiment_counts = df['Sentimen'].value_counts().reset_index()
-            sentiment_counts.columns = ['Sentimen', 'Jumlah']
-            fig_bar = px.bar(sentiment_counts, x='Sentimen', y='Jumlah', color='Sentimen',
-                             color_discrete_map={'Positif':'#2ecc71', 'Netral':'#95a5a6', 'Negatif':'#e74c3c'})
+            st.subheader("Tren Sentimen Publik (AI)")
+            fig_bar = px.bar(df['Sentimen'].value_counts().reset_index(), x='Sentimen', y='count', 
+                             color='Sentimen', color_discrete_map={'Positif':'#2ecc71', 'Netral':'#95a5a6', 'Negatif':'#e74c3c'})
             st.plotly_chart(fig_bar, use_container_width=True)
 
-        # --- ROW 3: DATA LIST ---
+        # --- ROW 3: LIST DATA ---
         st.subheader("Detail Artikel Terkait")
         for _, row in df.iterrows():
             with st.container(border=True):
                 col_a, col_b = st.columns([4, 1])
                 with col_a:
                     st.write(f"**{row['Judul']}**")
-                    st.caption(f"Sumber: {row['Portal']} | [Baca Selengkapnya]({row['Link']})")
-                    st.write(row['Isi_Singkat'] + "...")
+                    st.caption(f"Sumber: {row['Portal']} | [Baca Berita]({row['Link']})")
+                    st.write(row['Isi'] + "...")
                 with col_b:
-                    color = "green" if row['Sentimen'] == "Positif" else "red" if row['Sentimen'] == "Negatif" else "gray"
-                    st.markdown(f"**Sentimen:** :{color}[{row['Sentimen']}]")
                     st.write(f"**Relevansi:** {row['Relevansi']}%")
+                    st.write(f"**Sentimen:** {row['Sentimen']}")
     else:
-        st.error("Data tidak ditemukan. Coba gunakan keyword yang lebih umum.")
+        st.error("Tidak ditemukan berita yang cukup relevan. Coba gunakan keyword yang lebih spesifik.")
