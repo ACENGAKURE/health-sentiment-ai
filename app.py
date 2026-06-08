@@ -241,18 +241,107 @@ def deteksi_lokasi(judul, isi):
     teks = f"{judul} {isi}".lower()
 
     lokasi_list = [
-        "jakarta", "bogor", "depok", "tangerang", "bekasi",
-        "bandung", "surabaya", "semarang", "yogyakarta",
+        "jakarta", "jakarta pusat", "jakarta selatan", "jakarta timur", "jakarta barat", "jakarta utara",
+        "bogor", "depok", "tangerang", "bekasi",
+        "bandung", "cimahi", "garut", "tasikmalaya", "cirebon",
+        "surabaya", "malang", "sidoarjo", "gresik",
+        "semarang", "solo", "surakarta", "yogyakarta",
         "banten", "jawa barat", "jawa tengah", "jawa timur",
-        "bali", "sumatera", "kalimantan", "sulawesi",
-        "papua", "aceh", "medan", "makassar"
+        "bali", "denpasar",
+        "sumatera utara", "sumatera barat", "sumatera selatan",
+        "kalimantan", "kalimantan timur", "kalimantan barat", "kalimantan selatan",
+        "sulawesi", "sulawesi selatan", "sulawesi utara",
+        "papua", "aceh", "medan", "makassar", "palembang", "padang", "pekanbaru",
+        "lampung", "pontianak", "banjarmasin", "balikpapan", "samarinda", "manado", "ambon"
     ]
+
+    # Lokasi yang lebih spesifik dicek lebih dulu
+    lokasi_list = sorted(lokasi_list, key=len, reverse=True)
 
     for lokasi in lokasi_list:
         if lokasi in teks:
             return lokasi.title()
 
     return "Tidak Diketahui"
+
+
+# =====================================================
+# KOORDINAT LOKASI UNTUK PETA SEBARAN
+# =====================================================
+koordinat_lokasi = {
+    "Jakarta": (-6.2088, 106.8456),
+    "Jakarta Pusat": (-6.1865, 106.8341),
+    "Jakarta Selatan": (-6.2615, 106.8106),
+    "Jakarta Timur": (-6.2250, 106.9004),
+    "Jakarta Barat": (-6.1683, 106.7588),
+    "Jakarta Utara": (-6.1384, 106.8639),
+    "Bogor": (-6.5971, 106.8060),
+    "Depok": (-6.4025, 106.7942),
+    "Tangerang": (-6.1783, 106.6319),
+    "Bekasi": (-6.2383, 106.9756),
+    "Bandung": (-6.9175, 107.6191),
+    "Cimahi": (-6.8722, 107.5425),
+    "Garut": (-7.2157, 107.9017),
+    "Tasikmalaya": (-7.3506, 108.2172),
+    "Cirebon": (-6.7320, 108.5523),
+    "Surabaya": (-7.2575, 112.7521),
+    "Malang": (-7.9666, 112.6326),
+    "Sidoarjo": (-7.4460, 112.7183),
+    "Gresik": (-7.1566, 112.6555),
+    "Semarang": (-6.9667, 110.4167),
+    "Solo": (-7.5755, 110.8243),
+    "Surakarta": (-7.5755, 110.8243),
+    "Yogyakarta": (-7.7956, 110.3695),
+    "Banten": (-6.4058, 106.0640),
+    "Jawa Barat": (-6.9147, 107.6098),
+    "Jawa Tengah": (-7.1500, 110.1403),
+    "Jawa Timur": (-7.5361, 112.2384),
+    "Bali": (-8.4095, 115.1889),
+    "Denpasar": (-8.6705, 115.2126),
+    "Sumatera Utara": (2.1154, 99.5451),
+    "Sumatera Barat": (-0.7399, 100.8000),
+    "Sumatera Selatan": (-3.3194, 103.9144),
+    "Aceh": (4.6951, 96.7494),
+    "Medan": (3.5952, 98.6722),
+    "Palembang": (-2.9761, 104.7754),
+    "Padang": (-0.9471, 100.4172),
+    "Pekanbaru": (0.5071, 101.4478),
+    "Lampung": (-4.5586, 105.4068),
+    "Kalimantan": (-1.6815, 113.3824),
+    "Kalimantan Timur": (0.5387, 116.4194),
+    "Kalimantan Barat": (-0.2788, 111.4753),
+    "Kalimantan Selatan": (-3.0926, 115.2838),
+    "Pontianak": (-0.0263, 109.3425),
+    "Banjarmasin": (-3.3186, 114.5944),
+    "Balikpapan": (-1.2379, 116.8529),
+    "Samarinda": (-0.5022, 117.1536),
+    "Sulawesi": (-1.4300, 121.4456),
+    "Sulawesi Selatan": (-3.6688, 119.9741),
+    "Sulawesi Utara": (0.6247, 123.9750),
+    "Makassar": (-5.1477, 119.4327),
+    "Manado": (1.4748, 124.8421),
+    "Ambon": (-3.6954, 128.1814),
+    "Papua": (-4.2699, 138.0804)
+}
+
+
+def tambah_koordinat(df):
+    df = df.copy()
+
+    def ambil_lat(lokasi):
+        if lokasi in koordinat_lokasi:
+            return koordinat_lokasi[lokasi][0]
+        return None
+
+    def ambil_lon(lokasi):
+        if lokasi in koordinat_lokasi:
+            return koordinat_lokasi[lokasi][1]
+        return None
+
+    df["lat"] = df["Lokasi"].apply(ambil_lat)
+    df["lon"] = df["Lokasi"].apply(ambil_lon)
+
+    return df
 
 # =====================================================
 # SCRAPER
@@ -486,6 +575,7 @@ if btn_cari and keyword_input:
         st.stop()
 
     df = pd.DataFrame(all_results)
+    df = tambah_koordinat(df)
 
     if lokasi_filter != "Semua Lokasi":
         df = df[df["Lokasi"].str.lower().str.contains(lokasi_filter.lower(), na=False)]
@@ -623,6 +713,54 @@ if btn_cari and keyword_input:
             y="Jumlah"
         )
         st.plotly_chart(fig_lokasi, use_container_width=True)
+
+        st.markdown("### 🗺️ Peta Sebaran Berita Penyakit Menular")
+
+        df_map = df.dropna(subset=["lat", "lon"]).copy()
+
+        if df_map.empty:
+            st.warning(
+                "Lokasi belum dapat dipetakan karena nama wilayah tidak terdeteksi pada hasil crawling. "
+                "Coba gunakan kata kunci seperti 'DBD Bandung', 'Covid Jakarta', atau 'Malaria Papua'."
+            )
+        else:
+            map_count = (
+                df_map
+                .groupby(["Lokasi", "lat", "lon", "Penyakit", "Label Event"], as_index=False)
+                .size()
+                .rename(columns={"size": "Jumlah Berita"})
+            )
+
+            fig_map = px.scatter_mapbox(
+                map_count,
+                lat="lat",
+                lon="lon",
+                size="Jumlah Berita",
+                color="Label Event",
+                hover_name="Lokasi",
+                hover_data={
+                    "Penyakit": True,
+                    "Jumlah Berita": True,
+                    "lat": False,
+                    "lon": False
+                },
+                zoom=4,
+                height=520,
+                mapbox_style="open-street-map",
+                title="Peta Sebaran Event Penyakit Berdasarkan Lokasi Berita"
+            )
+
+            fig_map.update_layout(
+                margin=dict(l=0, r=0, t=40, b=0)
+            )
+
+            st.plotly_chart(fig_map, use_container_width=True)
+
+            st.markdown("#### Tabel Sebaran Lokasi")
+            st.dataframe(
+                map_count.sort_values("Jumlah Berita", ascending=False),
+                use_container_width=True
+            )
 
     # =====================================================
     # TAB DETAIL BERITA
