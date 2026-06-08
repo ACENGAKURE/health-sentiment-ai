@@ -155,7 +155,13 @@ kata_noise = [
     "sepak bola", "bola", "otomotif", "harga mobil", "saham",
     "film", "musik", "konser", "artis", "gosip", "zodiak",
     "lowongan kerja", "best companies", "phk", "ekonomi",
-    "politik", "pilkada", "pemilu", "korupsi"
+    "politik", "pilkada", "pemilu", "korupsi",
+
+    # blacklist agar berita non-epidemi tidak masuk
+    "pemerkosaan", "diperkosa", "pencabulan", "pelecehan",
+    "pembunuhan", "penganiayaan", "narkoba", "kriminal",
+    "polisi", "tersangka", "terdakwa", "pengadilan",
+    "hakim", "jaksa", "sidang", "vonis", "dakwaan"
 ]
 
 # =====================================================
@@ -257,26 +263,37 @@ def deteksi_penyakit(judul, isi):
 
 def artikel_relevan_penyakit(keyword, judul, isi):
     """
-    Filter ketat:
-    1. Harus mengandung keyword pencarian ATAU salah satu nama penyakit.
-    2. Harus mengandung konteks kesehatan.
-    3. Tidak boleh dominan noise/topik tidak relevan.
+    Filter ketat untuk dashboard epidemi.
+
+    Berita dianggap valid jika:
+    1. Mengandung nama penyakit.
+    2. Mengandung konteks kesehatan/epidemi.
+    3. Tidak mengandung topik kriminal, politik, hiburan, olahraga, atau ekonomi yang tidak relevan.
     """
     teks = f"{judul} {isi}".lower()
-    keyword_low = keyword.lower()
+    keyword_low = keyword.lower().strip()
 
-    ada_keyword = keyword_low in teks
-    ada_penyakit = any(k in teks for k in mapping_penyakit.keys())
-    ada_konteks = any(k in teks for k in kata_konteks_kesehatan)
-    ada_noise = any(k in teks for k in kata_noise)
+    ada_penyakit = any(p in teks for p in mapping_penyakit.keys())
+    ada_konteks_kesehatan = any(k in teks for k in kata_konteks_kesehatan)
+    ada_noise = any(n in teks for n in kata_noise)
 
-    if ada_noise and not ada_konteks:
+    if ada_noise:
         return False
 
-    if (ada_keyword or ada_penyakit) and ada_konteks:
-        return True
+    if not ada_penyakit:
+        return False
 
-    return False
+    if not ada_konteks_kesehatan:
+        return False
+
+    # Jika user mencari penyakit tertentu, keyword itu harus muncul.
+    # Contoh keyword covid: berita yang tidak mengandung covid/corona tidak boleh lolos.
+    if keyword_low and keyword_low not in teks:
+        penyakit_terdeteksi = deteksi_penyakit(judul, isi).lower()
+        if keyword_low not in penyakit_terdeteksi:
+            return False
+
+    return True
 
 
 def deteksi_lokasi(judul, isi):
@@ -565,9 +582,14 @@ def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=30, 
                 relevansi = hitung_relevansi(keyword, title, isi)
 
                 if relevansi >= min_relevansi:
+                    penyakit = deteksi_penyakit(title, isi)
+
+                    # Berita tanpa nama penyakit yang jelas tidak dimasukkan
+                    if penyakit == "Tidak Diketahui":
+                        continue
+
                     sentimen = hitung_sentimen_ml(title + " " + isi)
                     label_event = klasifikasi_event(title, isi)
-                    penyakit = deteksi_penyakit(title, isi)
                     lokasi = deteksi_lokasi(title, isi)
 
                     data.append({
@@ -989,12 +1011,26 @@ if btn_cari and keyword_input:
         )
 
 else:
-    st.info("Masukkan kata kunci penyakit, lalu klik **Mulai Crawling / Cari AI**.")
     st.markdown("""
-    ### Perbaikan Pada Versi Ini
-    - Sentimen tidak dipaksa menjadi Netral semua.
-    - Jika model IndoBERT gagal, sistem memakai rule-based fallback.
-    - Crawler difilter lebih ketat agar hanya mengambil berita penyakit.
-    - Berita tidak relevan seperti ekonomi, hiburan, politik, dan olahraga lebih banyak dibuang.
-    - Dashboard tetap memiliki Event/Non-Event, Top Penyakit, peta sebaran, dan export CSV.
-    """)
+    <div style="
+        background-color:white;
+        padding:30px;
+        border-radius:12px;
+        text-align:center;
+        border:1px solid #E5E7EB;
+        margin-top:20px;
+    ">
+        <h2 style="color:#2F80ED;">
+            🦠 PantauTular Epidemi Intelligence
+        </h2>
+        <p style="font-size:18px; color:#4B5563; line-height:1.8;">
+            Sistem pemantauan penyakit menular berbasis berita online menggunakan
+            Web Crawling, Natural Language Processing, klasifikasi Event/Non-Event,
+            analisis sentimen, dan visualisasi peta sebaran penyakit.
+        </p>
+        <p style="color:#6B7280; font-size:16px; margin-top:15px;">
+            Masukkan kata kunci penyakit pada panel kiri, kemudian klik
+            <b>Mulai Crawling / Cari AI</b> untuk menampilkan dashboard epidemi.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
