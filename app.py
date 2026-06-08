@@ -28,7 +28,7 @@ st.markdown("""
     padding-top: 20px;
 }
 .main-title {
-    font-size: 34px;
+    font-size: 42px;
     font-weight: 800;
     color: #2F80ED;
     margin-bottom: 0;
@@ -761,19 +761,31 @@ if btn_cari and keyword_input:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    st.info(
-        "Versi ini memakai filter penyakit yang lebih ketat. Jumlah berita bisa lebih sedikit, "
-        "tetapi kualitas data lebih cocok untuk dashboard epidemi dan laporan KKP."
-    )
-
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📊 Dashboard Epidemi",
+        "🗺️ Peta Sebaran",
         "📰 Detail Berita",
-        "📥 Export Dataset"
+        "📥 Dataset"
     ])
 
     with tab1:
         st.markdown("### 📊 Ringkasan Pemantauan Epidemi Berbasis Berita Online")
+
+        total_non_event = len(df[df["Label Event"] == "Non-Event"])
+        total_penyakit = df[df["Penyakit"] != "Tidak Diketahui"]["Penyakit"].nunique()
+        total_lokasi = df[df["Lokasi"] != "Tidak Diketahui"]["Lokasi"].nunique()
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Total Berita Valid", total_artikel)
+        k2.metric("Event", total_event)
+        k3.metric("Non-Event", total_non_event)
+        k4.metric("Penyakit Terdeteksi", total_penyakit)
+
+        k5, k6 = st.columns(2)
+        k5.metric("Lokasi Terdeteksi", total_lokasi)
+        k6.metric("Rerata Relevansi", f"{rerata_relevansi}%")
+
+        st.markdown("---")
 
         c1, c2 = st.columns(2)
 
@@ -812,7 +824,27 @@ if btn_cari and keyword_input:
         st.progress(min(int(rerata_relevansi), 100))
         st.info(f"Rerata relevansi artikel terhadap kata kunci '{keyword_input}' adalah {rerata_relevansi}%.")
 
+        st.markdown("#### Top Lokasi Terdeteksi")
+        lokasi_valid = df[df["Lokasi"] != "Tidak Diketahui"]
+
+        if lokasi_valid.empty:
+            st.warning("Lokasi belum banyak terdeteksi dari hasil crawling.")
+        else:
+            top_lokasi = lokasi_valid["Lokasi"].value_counts().reset_index()
+            top_lokasi.columns = ["Lokasi", "Jumlah"]
+
+            fig_top_lokasi = px.bar(
+                top_lokasi.head(10),
+                x="Jumlah",
+                y="Lokasi",
+                orientation="h"
+            )
+            fig_top_lokasi.update_layout(yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(fig_top_lokasi, use_container_width=True)
+
+    with tab2:
         st.markdown("### 🗺️ Peta Sebaran Berita Penyakit Menular")
+
         df_map = df.dropna(subset=["lat", "lon"]).copy()
 
         if df_map.empty:
@@ -842,7 +874,7 @@ if btn_cari and keyword_input:
                     "lon": False
                 },
                 zoom=4,
-                height=520,
+                height=420,
                 mapbox_style="open-street-map",
                 title="Peta Sebaran Event Penyakit Berdasarkan Lokasi Berita"
             )
@@ -856,39 +888,89 @@ if btn_cari and keyword_input:
                 use_container_width=True
             )
 
-    with tab2:
-        st.markdown("### 📰 Detail Berita Valid")
-
-        for _, row in df.iterrows():
-            badge_event_class = "badge-red" if row["Label Event"] == "Event" else "badge-gray"
-            badge_sentimen_class = "badge-gray"
-            if row["Sentimen"] == "Negatif":
-                badge_sentimen_class = "badge-red"
-            elif row["Sentimen"] == "Positif":
-                badge_sentimen_class = "badge-green"
-            elif row["Sentimen"] == "Netral":
-                badge_sentimen_class = "badge-yellow"
-
-            st.markdown(f"""
-            <div class="news-card">
-                <h4 style="margin-bottom: 6px; color:#2F80ED;">{row['Judul']}</h4>
-                <p style="font-size:12px; color:#6B7280;">
-                    Sumber: <b>{row['Portal']}</b> |
-                    Lokasi: <b>{row['Lokasi']}</b> |
-                    <a href="{row['Link']}" target="_blank">Buka Berita ↗</a>
-                </p>
-                <p style="font-size:14px; color:#374151; line-height:1.6;">
-                    {row['Isi']}...
-                </p>
-                <span class="badge badge-blue">🎯 Relevansi: {row['Relevansi']}%</span>
-                <span class="badge {badge_sentimen_class}">🤖 Sentimen: {row['Sentimen']}</span>
-                <span class="badge {badge_event_class}">🚨 {row['Label Event']}</span>
-                <span class="badge badge-yellow">🦠 {row['Penyakit']}</span>
-            </div>
-            """, unsafe_allow_html=True)
-
     with tab3:
-        st.markdown("### 📥 Export Dataset Hasil Crawling")
+        st.markdown("## 📰 Detail Berita Epidemi")
+
+        df_detail = df.copy()
+
+        col_filter1, col_filter2, col_filter3 = st.columns(3)
+
+        with col_filter1:
+            pilih_penyakit = st.selectbox(
+                "Filter Penyakit",
+                ["Semua"] + sorted(df_detail["Penyakit"].dropna().unique().tolist())
+            )
+
+        with col_filter2:
+            pilih_event = st.selectbox(
+                "Filter Kategori",
+                ["Semua"] + sorted(df_detail["Label Event"].dropna().unique().tolist())
+            )
+
+        with col_filter3:
+            pilih_sentimen = st.selectbox(
+                "Filter Sentimen",
+                ["Semua"] + sorted(df_detail["Sentimen"].dropna().unique().tolist())
+            )
+
+        if pilih_penyakit != "Semua":
+            df_detail = df_detail[df_detail["Penyakit"] == pilih_penyakit]
+
+        if pilih_event != "Semua":
+            df_detail = df_detail[df_detail["Label Event"] == pilih_event]
+
+        if pilih_sentimen != "Semua":
+            df_detail = df_detail[df_detail["Sentimen"] == pilih_sentimen]
+
+        if df_detail.empty:
+            st.warning("Tidak ada berita yang sesuai dengan filter.")
+        else:
+            judul_terpilih = st.selectbox(
+                "Pilih berita untuk dilihat detailnya",
+                df_detail["Judul"].tolist()
+            )
+
+            row = df_detail[df_detail["Judul"] == judul_terpilih].iloc[0]
+
+            st.markdown("---")
+            st.markdown(f"## {row['Judul']}")
+
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Penyakit", row["Penyakit"])
+            d2.metric("Kategori", row["Label Event"])
+            d3.metric("Sentimen", row["Sentimen"])
+            d4.metric("Relevansi", f"{row['Relevansi']}%")
+
+            st.markdown("### Informasi Berita")
+            info1, info2 = st.columns(2)
+            info1.write(f"**Portal:** {row['Portal']}")
+            info2.write(f"**Lokasi Terdeteksi:** {row['Lokasi']}")
+
+            st.markdown("### Ringkasan Isi Berita")
+            st.markdown(
+                f"""
+                <div style="background-color:white; padding:24px; border-radius:12px; border:1px solid #E5E7EB; font-size:17px; line-height:1.8;">
+                    {row['Isi']}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            st.markdown("### Link Artikel")
+            st.markdown(f"[🔗 Buka Artikel Asli]({row['Link']})")
+
+            st.markdown("---")
+            st.markdown("### Tabel Berita Sesuai Filter")
+            st.dataframe(
+                df_detail[[
+                    "Portal", "Judul", "Penyakit", "Label Event",
+                    "Sentimen", "Relevansi", "Lokasi", "Link"
+                ]],
+                use_container_width=True
+            )
+
+    with tab4:
+        st.markdown("### 📥 Dataset Hasil Crawling")
         st.dataframe(df, use_container_width=True)
 
         csv = df.to_csv(index=False).encode("utf-8-sig")
@@ -902,8 +984,8 @@ if btn_cari and keyword_input:
         )
 
         st.info(
-            "Dataset ini sudah melewati filter penyakit yang lebih ketat, sehingga lebih layak digunakan "
-            "untuk lampiran laporan KKP."
+            "Dataset ini dapat digunakan sebagai lampiran laporan KKP, terutama untuk bukti hasil crawling, "
+            "klasifikasi Event/Non-Event, analisis sentimen, dan peta sebaran."
         )
 
 else:
