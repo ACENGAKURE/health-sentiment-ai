@@ -85,43 +85,40 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =====================================================
-# LOAD MODEL
+# LOAD MODEL SENTIMEN
 # =====================================================
 @st.cache_resource
 def load_sentiment_model():
+    """
+    Model ini kadang mengeluarkan label berbeda-beda:
+    - positive / negative / neutral
+    - LABEL_0 / LABEL_1 / LABEL_2
+    Karena itu fungsi mapping dibuat lebih aman.
+    """
     try:
         return pipeline(
             "sentiment-analysis",
             model="w11wo/indobert-sentiment-analysis"
         )
     except Exception:
-        return None
+        try:
+            return pipeline(
+                "sentiment-analysis",
+                model="mdhugol/indonesia-bert-sentiment-classification"
+            )
+        except Exception:
+            return None
 
 nlp_model = load_sentiment_model()
 
 # =====================================================
-# KEYWORDS
+# KAMUS PENYAKIT DAN FILTER KESEHATAN
 # =====================================================
-event_keywords = [
-    "kasus", "wabah", "terjangkit", "terinfeksi", "positif",
-    "meninggal", "kematian", "dirawat", "suspek", "penularan",
-    "menular", "lonjakan", "meningkat", "ditemukan", "terdeteksi",
-    "pasien", "korban", "klaster", "endemik", "darurat",
-    "kedaruratan", "menyebar", "isolasi", "karantina",
-    "bertambah", "naik", "terpapar", "menginfeksi"
-]
-
-non_event_keywords = [
-    "tips", "cara mencegah", "pencegahan", "edukasi", "imbauan",
-    "vaksinasi", "sosialisasi", "penelitian", "studi", "opini",
-    "gejala", "pengobatan", "konsultasi", "waspada", "kenali",
-    "mencegah", "cegah", "anjuran", "cara mengatasi"
-]
-
 mapping_penyakit = {
     "covid": "Covid",
     "covid-19": "Covid",
     "corona": "Covid",
+    "virus corona": "Covid",
     "dbd": "DBD",
     "demam berdarah": "Demam Berdarah",
     "dengue": "Dengue",
@@ -139,8 +136,62 @@ mapping_penyakit = {
     "cacar monyet": "Mpox",
     "mpox": "Mpox",
     "chikungunya": "Chikungunya",
-    "leptospirosis": "Leptospirosis"
+    "leptospirosis": "Leptospirosis",
+    "antraks": "Antraks",
+    "difteri": "Difteri",
+    "kolera": "Kolera"
 }
+
+kata_konteks_kesehatan = [
+    "kasus", "wabah", "penyakit", "pasien", "terinfeksi", "terjangkit",
+    "positif", "meninggal", "kematian", "dirawat", "rumah sakit",
+    "puskesmas", "kemenkes", "dinas kesehatan", "vaksin", "vaksinasi",
+    "penularan", "menular", "virus", "bakteri", "gejala", "klaster",
+    "epidemi", "pandemi", "endemi", "kejadian luar biasa", "klb",
+    "kesehatan", "dokter", "obat", "isolasi", "karantina"
+]
+
+kata_noise = [
+    "sepak bola", "bola", "otomotif", "harga mobil", "saham",
+    "film", "musik", "konser", "artis", "gosip", "zodiak",
+    "lowongan kerja", "best companies", "phk", "ekonomi",
+    "politik", "pilkada", "pemilu", "korupsi"
+]
+
+# =====================================================
+# KAMUS EVENT DAN SENTIMEN RULE-BASED CADANGAN
+# =====================================================
+event_keywords = [
+    "kasus", "wabah", "terjangkit", "terinfeksi", "positif",
+    "meninggal", "kematian", "dirawat", "suspek", "penularan",
+    "menular", "lonjakan", "meningkat", "ditemukan", "terdeteksi",
+    "pasien", "korban", "klaster", "endemik", "darurat",
+    "kedaruratan", "menyebar", "isolasi", "karantina",
+    "bertambah", "naik", "terpapar", "menginfeksi", "klb",
+    "kejadian luar biasa"
+]
+
+non_event_keywords = [
+    "tips", "cara mencegah", "pencegahan", "edukasi", "imbauan",
+    "vaksinasi", "sosialisasi", "penelitian", "studi", "opini",
+    "gejala", "pengobatan", "konsultasi", "waspada", "kenali",
+    "mencegah", "cegah", "anjuran", "cara mengatasi"
+]
+
+sentimen_negatif_keywords = [
+    "meninggal", "kematian", "wabah", "darurat", "lonjakan",
+    "meningkat", "terjangkit", "terinfeksi", "positif",
+    "korban", "dirawat", "klb", "kejadian luar biasa",
+    "menyebar", "mengkhawatirkan", "fatal", "krisis",
+    "terpapar", "penularan", "kasus naik"
+]
+
+sentimen_positif_keywords = [
+    "sembuh", "menurun", "turun", "berhasil", "pulih",
+    "terkendali", "vaksinasi", "pencegahan", "cegah",
+    "antisipasi", "edukasi", "penanganan", "dikendalikan",
+    "membaik", "bebas", "zero case", "nol kasus"
+]
 
 # =====================================================
 # KOORDINAT LOKASI
@@ -192,62 +243,8 @@ koordinat_lokasi = {
 }
 
 # =====================================================
-# HELPER FUNCTIONS
+# FUNGSI DETEKSI
 # =====================================================
-def hitung_relevansi(keyword, judul, isi):
-    if not judul or not keyword:
-        return 0
-
-    teks = f"{judul} {isi}".lower()
-    keyword_low = keyword.lower()
-    score = 0
-
-    if keyword_low in judul.lower():
-        score += 70
-    elif keyword_low in teks:
-        score += 45
-
-    words = keyword_low.split()
-    if words:
-        match_count = sum(1 for w in words if w in teks)
-        score += (match_count / len(words)) * 30
-
-    isi_matches = teks.count(keyword_low)
-    if isi_matches >= 2:
-        score += 20
-    elif isi_matches == 1:
-        score += 10
-
-    return min(round(score, 1), 100.0)
-
-
-def hitung_sentimen_ml(teks):
-    if not teks or nlp_model is None:
-        return "Netral"
-
-    try:
-        hasil = nlp_model(teks[:512])[0]
-        label = hasil["label"].upper()
-
-        if "POS" in label or label == "LABEL_1":
-            return "Positif"
-        if "NEG" in label or label == "LABEL_0":
-            return "Negatif"
-        return "Netral"
-    except Exception:
-        return "Netral"
-
-
-def klasifikasi_event(judul, isi):
-    teks = f"{judul} {isi}".lower()
-    event_score = sum(1 for k in event_keywords if k in teks)
-    non_event_score = sum(1 for k in non_event_keywords if k in teks)
-
-    if event_score > non_event_score:
-        return "Event"
-    return "Non-Event"
-
-
 def deteksi_penyakit(judul, isi):
     teks = f"{judul} {isi}".lower()
 
@@ -256,6 +253,30 @@ def deteksi_penyakit(judul, isi):
             return value
 
     return "Tidak Diketahui"
+
+
+def artikel_relevan_penyakit(keyword, judul, isi):
+    """
+    Filter ketat:
+    1. Harus mengandung keyword pencarian ATAU salah satu nama penyakit.
+    2. Harus mengandung konteks kesehatan.
+    3. Tidak boleh dominan noise/topik tidak relevan.
+    """
+    teks = f"{judul} {isi}".lower()
+    keyword_low = keyword.lower()
+
+    ada_keyword = keyword_low in teks
+    ada_penyakit = any(k in teks for k in mapping_penyakit.keys())
+    ada_konteks = any(k in teks for k in kata_konteks_kesehatan)
+    ada_noise = any(k in teks for k in kata_noise)
+
+    if ada_noise and not ada_konteks:
+        return False
+
+    if (ada_keyword or ada_penyakit) and ada_konteks:
+        return True
+
+    return False
 
 
 def deteksi_lokasi(judul, isi):
@@ -290,9 +311,107 @@ def tambah_koordinat(df):
     return df
 
 
+def klasifikasi_event(judul, isi):
+    teks = f"{judul} {isi}".lower()
+    event_score = sum(1 for k in event_keywords if k in teks)
+    non_event_score = sum(1 for k in non_event_keywords if k in teks)
+
+    if event_score > non_event_score:
+        return "Event"
+    return "Non-Event"
+
+
+def sentimen_rule_based(teks):
+    teks = teks.lower()
+
+    neg_score = sum(1 for k in sentimen_negatif_keywords if k in teks)
+    pos_score = sum(1 for k in sentimen_positif_keywords if k in teks)
+
+    if neg_score > pos_score:
+        return "Negatif"
+    if pos_score > neg_score:
+        return "Positif"
+    return "Netral"
+
+
+def hitung_sentimen_ml(teks):
+    """
+    Perbaikan utama:
+    - Tidak langsung return Netral jika label model tidak sesuai.
+    - Mapping LABEL_0, LABEL_1, LABEL_2 dibuat fleksibel.
+    - Jika model gagal / confidence rendah, pakai rule-based fallback.
+    """
+    if not teks:
+        return "Netral"
+
+    fallback = sentimen_rule_based(teks)
+
+    if nlp_model is None:
+        return fallback
+
+    try:
+        hasil = nlp_model(teks[:512])[0]
+        label = str(hasil.get("label", "")).lower()
+        score = float(hasil.get("score", 0))
+
+        # Mapping label tekstual
+        if "positive" in label or "positif" in label or label == "pos":
+            return "Positif"
+        if "negative" in label or "negatif" in label or label == "neg":
+            return "Negatif"
+        if "neutral" in label or "netral" in label or label == "neu":
+            # Jika model bilang netral tapi rule-based menemukan sinyal kuat,
+            # pakai rule-based agar tidak semua jatuh ke netral.
+            return fallback if fallback != "Netral" else "Netral"
+
+        # Mapping umum untuk beberapa model IndoBERT:
+        # Banyak model sentiment memakai LABEL_0=negative, LABEL_1=neutral, LABEL_2=positive.
+        if label == "label_0":
+            return "Negatif"
+        if label == "label_1":
+            return fallback if fallback != "Netral" else "Netral"
+        if label == "label_2":
+            return "Positif"
+
+        # Kalau score rendah atau label tidak dikenal, pakai rule-based.
+        if score < 0.60:
+            return fallback
+
+        return fallback
+
+    except Exception:
+        return fallback
+
+
+def hitung_relevansi(keyword, judul, isi):
+    if not judul or not keyword:
+        return 0
+
+    teks = f"{judul} {isi}".lower()
+    keyword_low = keyword.lower()
+    score = 0
+
+    if keyword_low in judul.lower():
+        score += 60
+    elif keyword_low in teks:
+        score += 35
+
+    if any(k in teks for k in mapping_penyakit.keys()):
+        score += 25
+
+    if any(k in teks for k in kata_konteks_kesehatan):
+        score += 20
+
+    if any(k in teks for k in kata_noise):
+        score -= 20
+
+    return max(0, min(round(score, 1), 100.0))
+
+
 def bersihkan_judul(title):
     title = " ".join(title.split())
-    title = title.replace("ADVERTISEMENT", "").replace("SCROLL TO CONTINUE WITH CONTENT", "")
+    title = title.replace("ADVERTISEMENT", "")
+    title = title.replace("SCROLL TO CONTINUE WITH CONTENT", "")
     return title.strip()
 
 
@@ -340,7 +459,7 @@ def get_content(url):
 
 
 # =====================================================
-# URL SEARCH DENGAN PAGINATION
+# URL SEARCH
 # =====================================================
 def build_search_urls(portal, keyword, pages=5):
     q = quote(keyword)
@@ -373,7 +492,7 @@ def build_search_urls(portal, keyword, pages=5):
     return urls
 
 
-def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=5, pages=5):
+def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=30, pages=5):
     data = []
 
     headers = {
@@ -437,6 +556,12 @@ def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=5, p
                 seen_links.add(link)
 
                 isi = get_content(link)
+
+                # FILTER PALING PENTING:
+                # berita harus benar-benar mengandung penyakit + konteks kesehatan.
+                if not artikel_relevan_penyakit(keyword, title, isi):
+                    continue
+
                 relevansi = hitung_relevansi(keyword, title, isi)
 
                 if relevansi >= min_relevansi:
@@ -513,7 +638,7 @@ with st.sidebar:
         "Minimal relevansi",
         min_value=0,
         max_value=80,
-        value=5
+        value=30
     )
 
     st.markdown("---")
@@ -528,7 +653,7 @@ with st.sidebar:
 # HEADER
 # =====================================================
 st.markdown("<div class='main-title'>🦠 PantauTular Epidemi Intelligence</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Crawler berita penyakit menular dengan target 100+ artikel, klasifikasi Event/Non-Event, sentimen, dan peta sebaran.</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Crawler berita penyakit menular dengan filter penyakit ketat, klasifikasi Event/Non-Event, sentimen, dan peta sebaran.</div>", unsafe_allow_html=True)
 st.markdown("---")
 
 # =====================================================
@@ -595,7 +720,6 @@ if btn_cari and keyword_input:
     # =====================================================
     total_artikel = len(df)
     total_event = len(df[df["Label Event"] == "Event"])
-    total_non_event = len(df[df["Label Event"] == "Non-Event"])
     rerata_relevansi = round(df["Relevansi"].mean(), 1)
 
     accuracy_model = "84.9%"
@@ -606,7 +730,7 @@ if btn_cari and keyword_input:
     with col1:
         st.markdown(f"""
         <div class="card card-blue">
-            <div class="card-title">📰 TOTAL BERITA</div>
+            <div class="card-title">📰 TOTAL BERITA VALID</div>
             <div class="card-value">{total_artikel}</div>
         </div>
         """, unsafe_allow_html=True)
@@ -637,13 +761,10 @@ if btn_cari and keyword_input:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if total_artikel < 100:
-        st.warning(
-            f"Hasil saat ini {total_artikel} berita. Jika ingin 100+, naikkan jumlah halaman, naikkan maksimal berita per portal, "
-            "atau turunkan minimal relevansi ke 0–5."
-        )
-    else:
-        st.success(f"Target tercapai: sistem mendapatkan {total_artikel} berita.")
+    st.info(
+        "Versi ini memakai filter penyakit yang lebih ketat. Jumlah berita bisa lebih sedikit, "
+        "tetapi kualitas data lebih cocok untuk dashboard epidemi dan laporan KKP."
+    )
 
     tab1, tab2, tab3 = st.tabs([
         "📊 Dashboard Epidemi",
@@ -681,7 +802,7 @@ if btn_cari and keyword_input:
             st.plotly_chart(fig_portal, use_container_width=True)
 
         with c4:
-            st.markdown("#### Grafik Sentimen IndoBERT")
+            st.markdown("#### Grafik Sentimen")
             sentimen_count = df["Sentimen"].value_counts().reset_index()
             sentimen_count.columns = ["Sentimen", "Jumlah"]
             fig_sentimen = px.bar(sentimen_count, x="Sentimen", y="Jumlah")
@@ -696,7 +817,7 @@ if btn_cari and keyword_input:
 
         if df_map.empty:
             st.warning(
-                "Lokasi belum dapat dipetakan karena nama wilayah tidak terdeteksi pada hasil crawling. "
+                "Lokasi belum dapat dipetakan karena nama wilayah tidak terdeteksi. "
                 "Coba keyword seperti 'DBD Bandung', 'Covid Jakarta', atau 'Malaria Papua'."
             )
         else:
@@ -736,10 +857,17 @@ if btn_cari and keyword_input:
             )
 
     with tab2:
-        st.markdown("### 📰 Detail Berita Terdeteksi")
+        st.markdown("### 📰 Detail Berita Valid")
 
         for _, row in df.iterrows():
             badge_event_class = "badge-red" if row["Label Event"] == "Event" else "badge-gray"
+            badge_sentimen_class = "badge-gray"
+            if row["Sentimen"] == "Negatif":
+                badge_sentimen_class = "badge-red"
+            elif row["Sentimen"] == "Positif":
+                badge_sentimen_class = "badge-green"
+            elif row["Sentimen"] == "Netral":
+                badge_sentimen_class = "badge-yellow"
 
             st.markdown(f"""
             <div class="news-card">
@@ -753,7 +881,7 @@ if btn_cari and keyword_input:
                     {row['Isi']}...
                 </p>
                 <span class="badge badge-blue">🎯 Relevansi: {row['Relevansi']}%</span>
-                <span class="badge badge-green">🤖 Sentimen: {row['Sentimen']}</span>
+                <span class="badge {badge_sentimen_class}">🤖 Sentimen: {row['Sentimen']}</span>
                 <span class="badge {badge_event_class}">🚨 {row['Label Event']}</span>
                 <span class="badge badge-yellow">🦠 {row['Penyakit']}</span>
             </div>
@@ -768,26 +896,23 @@ if btn_cari and keyword_input:
         st.download_button(
             label="Download CSV",
             data=csv,
-            file_name=f"hasil_crawling_{keyword_input}.csv",
+            file_name=f"hasil_crawling_valid_{keyword_input}.csv",
             mime="text/csv",
             use_container_width=True
         )
 
         st.info(
-            "Dataset ini dapat digunakan sebagai lampiran laporan KKP, terutama pada bagian hasil crawling, "
-            "klasifikasi event, analisis sentimen, dan peta sebaran."
+            "Dataset ini sudah melewati filter penyakit yang lebih ketat, sehingga lebih layak digunakan "
+            "untuk lampiran laporan KKP."
         )
 
 else:
     st.info("Masukkan kata kunci penyakit, lalu klik **Mulai Crawling / Cari AI**.")
     st.markdown("""
-    ### Fitur Sistem
-    - Target crawling sampai **100+ berita**.
-    - Mengambil data dari banyak portal berita online.
-    - Menggunakan pagination halaman pencarian.
-    - Klasifikasi **Event** dan **Non-Event**.
-    - Analisis sentimen menggunakan IndoBERT.
-    - Deteksi penyakit dan lokasi.
-    - Peta sebaran penyakit.
-    - Export dataset ke CSV.
+    ### Perbaikan Pada Versi Ini
+    - Sentimen tidak dipaksa menjadi Netral semua.
+    - Jika model IndoBERT gagal, sistem memakai rule-based fallback.
+    - Crawler difilter lebih ketat agar hanya mengambil berita penyakit.
+    - Berita tidak relevan seperti ekonomi, hiburan, politik, dan olahraga lebih banyak dibuang.
+    - Dashboard tetap memiliki Event/Non-Event, Top Penyakit, peta sebaran, dan export CSV.
     """)
