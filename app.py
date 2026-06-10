@@ -128,19 +128,74 @@ mapping_penyakit = {
     "tuberkulosis": "Tuberkulosis",
     "hiv": "HIV",
     "aids": "HIV/AIDS",
+    "hiv/aids": "HIV/AIDS",
     "hepatitis": "Hepatitis",
     "campak": "Campak",
     "polio": "Polio",
     "rabies": "Rabies",
     "flu burung": "Flu Burung",
+    "avian influenza": "Flu Burung",
+    "h5n1": "Flu Burung",
     "ispa": "ISPA",
+    "infeksi saluran pernapasan akut": "ISPA",
     "cacar monyet": "Mpox",
+    "monkeypox": "Mpox",
     "mpox": "Mpox",
     "chikungunya": "Chikungunya",
     "leptospirosis": "Leptospirosis",
     "antraks": "Antraks",
     "difteri": "Difteri",
-    "kolera": "Kolera"
+    "kolera": "Kolera",
+    "tifus": "Tifus",
+    "tifoid": "Tifus",
+    "typhoid": "Tifus",
+    "diare": "Diare"
+}
+
+FILTER_PENYAKIT = {
+    "Semua Penyakit": [],
+    "Covid": ["Covid"],
+    "DBD": ["DBD", "Demam Berdarah", "Dengue"],
+    "TBC": ["TBC", "Tuberkulosis"],
+    "Malaria": ["Malaria"],
+    "Campak": ["Campak"],
+    "ISPA": ["ISPA"],
+    "Hepatitis": ["Hepatitis"],
+    "Rabies": ["Rabies"],
+    "Flu Burung": ["Flu Burung"],
+    "Chikungunya": ["Chikungunya"],
+    "Leptospirosis": ["Leptospirosis"],
+    "Kolera": ["Kolera"],
+    "Mpox": ["Mpox"],
+    "HIV/AIDS": ["HIV", "HIV/AIDS"],
+    "Tifus": ["Tifus"],
+    "Polio": ["Polio"],
+    "Diare": ["Diare"],
+    "Antraks": ["Antraks"],
+    "Difteri": ["Difteri"]
+}
+
+KEYWORD_CRAWL = {
+    "Semua Penyakit": "penyakit menular",
+    "Covid": "covid",
+    "DBD": "dbd",
+    "TBC": "tbc",
+    "Malaria": "malaria",
+    "Campak": "campak",
+    "ISPA": "ispa",
+    "Hepatitis": "hepatitis",
+    "Rabies": "rabies",
+    "Flu Burung": "flu burung",
+    "Chikungunya": "chikungunya",
+    "Leptospirosis": "leptospirosis",
+    "Kolera": "kolera",
+    "Mpox": "mpox",
+    "HIV/AIDS": "hiv aids",
+    "Tifus": "tifus",
+    "Polio": "polio",
+    "Diare": "diare",
+    "Antraks": "antraks",
+    "Difteri": "difteri"
 }
 
 kata_konteks_kesehatan = [
@@ -344,7 +399,7 @@ def artikel_relevan_penyakit(keyword, judul, isi):
     if not ada_konteks_kesehatan:
         return False
 
-    if keyword_low and keyword_low not in teks:
+    if keyword_low != "penyakit menular" and keyword_low and keyword_low not in teks:
         penyakit_terdeteksi = deteksi_penyakit(judul, isi).lower()
         if keyword_low not in penyakit_terdeteksi:
             return False
@@ -634,7 +689,7 @@ def build_search_urls(portal, keyword, pages=5):
     return urls
 
 
-def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=30, pages=5):
+def crawl_portal(keyword, portal, penyakit_pilihan, max_articles_per_portal=30, min_relevansi=30, pages=5):
     data = []
 
     headers = {
@@ -713,6 +768,12 @@ def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=30, 
                     if penyakit == "Tidak Diketahui":
                         continue
 
+                    # Filter dinamis berdasarkan penyakit yang dipilih di sidebar
+                    if penyakit_pilihan != "Semua Penyakit":
+                        penyakit_valid = FILTER_PENYAKIT.get(penyakit_pilihan, [])
+                        if penyakit not in penyakit_valid:
+                            continue
+
                     sentimen = hitung_sentimen_ml(title + " " + isi)
                     label_event = klasifikasi_event(title, isi)
                     lokasi = deteksi_lokasi(title, isi)
@@ -744,7 +805,13 @@ def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=30, 
 with st.sidebar:
     st.markdown("### 🔎 Filter Crawling")
 
-    keyword_input = st.text_input("Kata Kunci Penyakit:", "covid")
+    penyakit_pilihan = st.selectbox(
+        "Pilih Penyakit",
+        list(FILTER_PENYAKIT.keys()),
+        index=1
+    )
+
+    keyword_input = KEYWORD_CRAWL[penyakit_pilihan]
 
     lokasi_filter = st.selectbox(
         "Lokasi Wilayah",
@@ -831,11 +898,12 @@ if btn_cari and keyword_input:
         if len(all_results) >= target_total_berita:
             break
 
-        msg.info(f"Mengambil data dari portal {p.upper()}... Total sementara: {len(all_results)} berita")
+        msg.info(f"Mengambil data {penyakit_pilihan} dari portal {p.upper()}... Total sementara: {len(all_results)} berita")
 
         result = crawl_portal(
             keyword=keyword_input,
             portal=p,
+            penyakit_pilihan=penyakit_pilihan,
             max_articles_per_portal=max_articles_per_portal,
             min_relevansi=min_relevansi,
             pages=jumlah_halaman
@@ -981,7 +1049,7 @@ if btn_cari and keyword_input:
 
         st.markdown("#### Rerata Relevansi Hasil Crawling")
         st.progress(min(int(rerata_relevansi), 100))
-        st.info(f"Rerata relevansi artikel terhadap kata kunci '{keyword_input}' adalah {rerata_relevansi}%.")
+        st.info(f"Rerata relevansi artikel terhadap penyakit {penyakit_pilihan} adalah {rerata_relevansi}%.")
 
         st.markdown("#### Top Lokasi Terdeteksi")
         lokasi_valid = df[df["Lokasi"] != "Tidak Diketahui"]
@@ -1137,7 +1205,7 @@ if btn_cari and keyword_input:
         st.download_button(
             label="Download CSV",
             data=csv,
-            file_name=f"hasil_crawling_valid_{keyword_input}.csv",
+            file_name=f"hasil_crawling_valid_{penyakit_pilihan}.csv",
             mime="text/csv",
             use_container_width=True
         )
@@ -1166,7 +1234,7 @@ else:
             analisis sentimen, dan visualisasi peta sebaran penyakit.
         </p>
         <p style="color:#6B7280; font-size:16px; margin-top:15px;">
-            Masukkan kata kunci penyakit pada panel kiri, kemudian klik
+            Pilih jenis penyakit pada panel kiri, kemudian klik
             <b>Mulai Crawling / Cari AI</b> untuk menampilkan dashboard epidemi.
         </p>
     </div>
