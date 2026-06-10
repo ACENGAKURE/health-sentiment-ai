@@ -152,17 +152,39 @@ kata_konteks_kesehatan = [
     "kesehatan", "dokter", "obat", "isolasi", "karantina"
 ]
 
+kata_event_epidemi_kuat = [
+    "kasus covid", "kasus covid-19", "pasien covid", "positif covid",
+    "terinfeksi covid", "terpapar covid", "varian covid",
+    "vaksin covid", "covid-19", "virus corona", "corona",
+    "lonjakan kasus", "kasus aktif", "kematian akibat",
+    "wabah", "penularan", "klaster", "isolasi", "karantina"
+]
+
+kata_konteks_lama_covid = [
+    "sejak pandemi", "pasca pandemi", "masa pandemi",
+    "era covid", "saat pandemi", "pandemi covid membuat",
+    "terdampak pandemi", "pemulihan pandemi", "pengalaman defisit",
+    "mulai 2018-2020", "pandemi covid sempat"
+]
+
 kata_noise = [
     "sepak bola", "bola", "otomotif", "harga mobil", "saham",
     "film", "musik", "konser", "artis", "gosip", "zodiak",
     "lowongan kerja", "best companies", "phk", "ekonomi",
     "politik", "pilkada", "pemilu", "korupsi",
 
-    # blacklist agar berita non-epidemi tidak masuk
+    # ekonomi, bisnis, wisata, administrasi
+    "bpjs", "bpjs kesehatan", "defisit", "gagal bayar", "dpr",
+    "komisi ix", "anggaran", "pembiayaan", "utang", "saham",
+    "ihsg", "bursa", "wisata", "wisman", "turis", "hotel",
+    "restoran", "travel", "pesawat", "umkm", "perdagangan",
+
+    # blacklist kriminal/non-epidemi
     "pemerkosaan", "diperkosa", "pencabulan", "pelecehan",
     "pembunuhan", "penganiayaan", "narkoba", "kriminal",
     "polisi", "tersangka", "terdakwa", "pengadilan",
-    "hakim", "jaksa", "sidang", "vonis", "dakwaan"
+    "hakim", "jaksa", "sidang", "vonis", "dakwaan",
+    "daycare", "ptsd"
 ]
 
 # =====================================================
@@ -253,11 +275,20 @@ koordinat_lokasi = {
 # FUNGSI DETEKSI
 # =====================================================
 def deteksi_penyakit(judul, isi):
+    """
+    Menentukan penyakit utama berdasarkan frekuensi kemunculan.
+    Ini mencegah berita otomatis menjadi Covid hanya karena menyebut Covid sekali.
+    """
     teks = f"{judul} {isi}".lower()
+    skor = {}
 
     for key, value in mapping_penyakit.items():
-        if key in teks:
-            return value
+        jumlah = teks.count(key)
+        if jumlah > 0:
+            skor[value] = skor.get(value, 0) + jumlah
+
+    if skor:
+        return max(skor, key=skor.get)
 
     return "Tidak Diketahui"
 
@@ -266,18 +297,44 @@ def artikel_relevan_penyakit(keyword, judul, isi):
     """
     Filter ketat untuk dashboard epidemi.
 
-    Berita dianggap valid jika:
-    1. Mengandung nama penyakit.
-    2. Mengandung konteks kesehatan/epidemi.
-    3. Tidak mengandung topik kriminal, politik, hiburan, olahraga, atau ekonomi yang tidak relevan.
+    Khusus keyword covid:
+    - Harus mengandung covid/covid-19/corona.
+    - Harus terkait kasus/pasien/vaksin/penularan/klaster/wabah.
+    - Berita ekonomi, BPJS, wisata, kriminal, politik, dll. dibuang.
     """
     teks = f"{judul} {isi}".lower()
+    judul_low = judul.lower()
     keyword_low = keyword.lower().strip()
 
     ada_penyakit = any(p in teks for p in mapping_penyakit.keys())
     ada_konteks_kesehatan = any(k in teks for k in kata_konteks_kesehatan)
     ada_noise = any(n in teks for n in kata_noise)
 
+    if keyword_low in ["covid", "covid-19", "corona", "virus corona"]:
+        covid_terms = ["covid", "covid-19", "corona", "virus corona"]
+        ada_covid = any(k in teks for k in covid_terms)
+        ada_covid_di_judul = any(k in judul_low for k in covid_terms)
+        ada_event_epidemi = any(k in teks for k in kata_event_epidemi_kuat)
+        konteks_lama = any(k in teks for k in kata_konteks_lama_covid)
+
+        if not ada_covid:
+            return False
+
+        # Contoh yang dibuang:
+        # BPJS defisit, wisata, bisnis, kriminal, ekonomi yang cuma menyebut pandemi/COVID sebagai konteks lama.
+        if ada_noise:
+            return False
+
+        if konteks_lama and not ada_event_epidemi:
+            return False
+
+        # Minimal Covid muncul di judul ATAU isi punya konteks epidemi kuat.
+        if not ada_covid_di_judul and not ada_event_epidemi:
+            return False
+
+        return True
+
+    # Untuk penyakit lain
     if ada_noise:
         return False
 
@@ -287,8 +344,6 @@ def artikel_relevan_penyakit(keyword, judul, isi):
     if not ada_konteks_kesehatan:
         return False
 
-    # Jika user mencari penyakit tertentu, keyword itu harus muncul.
-    # Contoh keyword covid: berita yang tidak mengandung covid/corona tidak boleh lolos.
     if keyword_low and keyword_low not in teks:
         penyakit_terdeteksi = deteksi_penyakit(judul, isi).lower()
         if keyword_low not in penyakit_terdeteksi:
@@ -406,22 +461,29 @@ def hitung_relevansi(keyword, judul, isi):
         return 0
 
     teks = f"{judul} {isi}".lower()
-    keyword_low = keyword.lower()
+    judul_low = judul.lower()
+    keyword_low = keyword.lower().strip()
+
     score = 0
 
-    if keyword_low in judul.lower():
+    if keyword_low in judul_low:
         score += 60
     elif keyword_low in teks:
-        score += 35
+        score += 30
 
-    if any(k in teks for k in mapping_penyakit.keys()):
-        score += 25
+    if keyword_low in ["covid", "covid-19", "corona", "virus corona"]:
+        if any(k in judul_low for k in ["covid", "covid-19", "corona", "virus corona"]):
+            score += 25
+        if any(k in teks for k in kata_event_epidemi_kuat):
+            score += 20
+        if any(k in teks for k in kata_konteks_lama_covid):
+            score -= 30
 
     if any(k in teks for k in kata_konteks_kesehatan):
-        score += 20
+        score += 15
 
     if any(k in teks for k in kata_noise):
-        score -= 20
+        score -= 50
 
     return max(0, min(round(score, 1), 100.0))
 
