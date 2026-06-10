@@ -5,6 +5,7 @@ import pandas as pd
 import time
 import plotly.express as px
 from urllib.parse import quote
+from datetime import datetime, timedelta
 from transformers import pipeline
 
 # =====================================================
@@ -432,6 +433,68 @@ def bersihkan_judul(title):
     return title.strip()
 
 
+def deteksi_tanggal_berita(judul, isi):
+    teks = f"{judul} {isi}".lower()
+
+    bulan_map = {
+        "januari": 1, "februari": 2, "maret": 3, "april": 4,
+        "mei": 5, "juni": 6, "juli": 7, "agustus": 8,
+        "september": 9, "oktober": 10, "november": 11, "desember": 12,
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+        "jun": 6, "jul": 7, "agu": 8, "sep": 9,
+        "okt": 10, "nov": 11, "des": 12
+    }
+
+    import re
+
+    # Contoh format: 24 Mei 2026
+    pola = r"(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|jan|feb|mar|apr|jun|jul|agu|sep|okt|nov|des)\s+(20\d{2})"
+    cocok = re.search(pola, teks)
+
+    if cocok:
+        hari = int(cocok.group(1))
+        bulan = bulan_map[cocok.group(2)]
+        tahun = int(cocok.group(3))
+        try:
+            return datetime(tahun, bulan, hari).date()
+        except Exception:
+            return datetime.today().date()
+
+    # Contoh format: 24/05/2026 atau 24-05-2026
+    pola2 = r"(\d{1,2})[/-](\d{1,2})[/-](20\d{2})"
+    cocok2 = re.search(pola2, teks)
+
+    if cocok2:
+        hari = int(cocok2.group(1))
+        bulan = int(cocok2.group(2))
+        tahun = int(cocok2.group(3))
+        try:
+            return datetime(tahun, bulan, hari).date()
+        except Exception:
+            return datetime.today().date()
+
+    # Jika tanggal tidak terdeteksi dari portal, gunakan tanggal hari ini
+    return datetime.today().date()
+
+
+def filter_periode_df(df, periode):
+    if "Tanggal Berita" not in df.columns:
+        return df
+
+    hari_ini = datetime.today().date()
+
+    if periode == "30 Hari Terakhir":
+        batas = hari_ini - timedelta(days=30)
+    elif periode == "90 Hari Terakhir":
+        batas = hari_ini - timedelta(days=90)
+    elif periode == "1 Tahun Terakhir":
+        batas = hari_ini - timedelta(days=365)
+    else:
+        return df
+
+    return df[df["Tanggal Berita"] >= batas]
+
+
 def get_content(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -601,7 +664,8 @@ def crawl_portal(keyword, portal, max_articles_per_portal=30, min_relevansi=30, 
                         "Relevansi": relevansi,
                         "Label Event": label_event,
                         "Penyakit": penyakit,
-                        "Lokasi": lokasi
+                        "Lokasi": lokasi,
+                        "Tanggal Berita": deteksi_tanggal_berita(title, isi)
                     })
 
                     time.sleep(0.15)
@@ -623,6 +687,11 @@ with st.sidebar:
     lokasi_filter = st.selectbox(
         "Lokasi Wilayah",
         ["Semua Lokasi", "Jakarta", "Jawa Barat", "Banten", "Jawa Tengah", "Jawa Timur", "Bali", "Papua"]
+    )
+
+    periode_filter = st.selectbox(
+        "Periode Data",
+        ["Semua Data", "30 Hari Terakhir", "90 Hari Terakhir", "1 Tahun Terakhir"]
     )
 
     portal_opsi = [
@@ -729,6 +798,11 @@ if btn_cari and keyword_input:
 
     df = pd.DataFrame(all_results)
     df = tambah_koordinat(df)
+    df = filter_periode_df(df, periode_filter)
+
+    if df.empty:
+        st.warning("Data ditemukan, tetapi tidak sesuai dengan filter periode.")
+        st.stop()
 
     if lokasi_filter != "Semua Lokasi":
         df = df[df["Lokasi"].str.lower().str.contains(lokasi_filter.lower(), na=False)]
@@ -803,9 +877,10 @@ if btn_cari and keyword_input:
         k3.metric("Non-Event", total_non_event)
         k4.metric("Penyakit Terdeteksi", total_penyakit)
 
-        k5, k6 = st.columns(2)
+        k5, k6, k7 = st.columns(3)
         k5.metric("Lokasi Terdeteksi", total_lokasi)
         k6.metric("Rerata Relevansi", f"{rerata_relevansi}%")
+        k7.metric("Periode Data", periode_filter)
 
         st.markdown("---")
 
@@ -986,7 +1061,7 @@ if btn_cari and keyword_input:
             st.dataframe(
                 df_detail[[
                     "Portal", "Judul", "Penyakit", "Label Event",
-                    "Sentimen", "Relevansi", "Lokasi", "Link"
+                    "Sentimen", "Relevansi", "Lokasi", "Tanggal Berita", "Link"
                 ]],
                 use_container_width=True
             )
